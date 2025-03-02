@@ -35,7 +35,6 @@ export class DecoratorParser {
     }
 
     private resolveNode(node: ts.Node) {
-        console.log('node kind:', node.kind);
         if (ts.isClassDeclaration(node)) {
             this.resolveClassDeclaration(node);
         } else if (node.kind === ts.SyntaxKind.Decorator) {

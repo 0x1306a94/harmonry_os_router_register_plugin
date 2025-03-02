@@ -1,17 +1,25 @@
 import * as ts from 'typescript';
+import fs, { close } from "node:fs";
 import { readFileSync } from 'fs';
-import { AnalyzeResult, appRouterAnnotation } from './types';
+import { AnalyzeResult, appRouterAnnotation, ScanFileParam } from './types';
 import { resolve, dirname } from 'path';
+import JSON5 from 'json5';
+import { join } from 'node:path';
 
 export class DecoratorParser {
+    private modulePath: string;
     private filePath: string;
     private results: AnalyzeResult[] = [];
-    private importedFiles: Map<string, string> = new Map();
+    private importedFiles: Map<string[], string> = new Map();
     private exportedRedirects: Map<string, string> = new Map();
     private currentResult: AnalyzeResult = new AnalyzeResult();
+    private fileParam: ScanFileParam | undefined = undefined;
+    private structed: boolean = false;
 
-    constructor(filePath: string) {
+    constructor(modulePath: string, filePath: string, fileParam?: ScanFileParam) {
+        this.modulePath = modulePath;
         this.filePath = filePath;
+        this.fileParam = fileParam;
     }
 
     public parse(): AnalyzeResult[] {
@@ -35,11 +43,12 @@ export class DecoratorParser {
     }
 
     private resolveNode(node: ts.Node) {
+        // console.log('resolveNode:', node);
         if (ts.isClassDeclaration(node)) {
             this.resolveClassDeclaration(node);
         } else if (node.kind === ts.SyntaxKind.Decorator) {
             const success = this.parseDecorator(node as ts.Decorator);
-            if (success) {
+            if (success && this.currentResult.componentName && this.currentResult.componentName.length > 0) {
                 console.log('currentResult:', this.currentResult);
                 this.results.push(this.currentResult);
             }
@@ -47,31 +56,63 @@ export class DecoratorParser {
             this.resolveImportDeclaration(node as ts.ImportDeclaration);
         } else if (node.kind === ts.SyntaxKind.ExportDeclaration) {
             this.resolveExportDeclaration(node as ts.ExportDeclaration);
+        } else if (node.kind === ts.SyntaxKind.Identifier) {
+            this.resolveIdentifier(node as ts.Identifier);
         }
-
         ts.forEachChild(node, (child) => this.resolveNode(child));
     }
 
+    private resolveIdentifier(node: ts.Identifier) {
+        console.log('resolveExpression:', node);
+        if (this.structed && node.escapedText && this.currentResult.name) {
+            this.currentResult.componentName = node.escapedText as string;
+            this.currentResult.filePath = this.filePath;
+            this.structed = false;
+            console.log('currentResult:', this.currentResult);
+            this.results.push(this.currentResult);
+            return;
+        }
+
+        if (node.escapedText == 'struct') {
+            this.structed = true;
+        }
+    }
+
     private resolveImportDeclaration(node: ts.ImportDeclaration) {
-        if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+        const key: string[] = []
+        if (node.importClause?.namedBindings == undefined && node.importClause?.name != undefined) {
+            // import MyModule from './MyModule';
+            if (ts.isIdentifier(node.importClause.name)) {
+                key.push(node.importClause.name.escapedText ?? "")
+            }
+        } else {
+            node.importClause?.namedBindings?.forEachChild(child => {
+                if (ts.isImportSpecifier(child)) {
+                    // import { ExportedItem1, ExportedItem2 } from './MyModule';
+                    // import { ExportedItem as RenamedItem } from './MyModule';
+                    if (ts.isIdentifier(child.name)) {
+                        key.push(child.name.escapedText ?? "")
+                    }
+                } else if (ts.isNamespaceImport(child)) {
+                    // import * as MyModule from './MyModule';
+                    const node = child as ts.NamespaceImport
+                    if (ts.isIdentifier(node.name)) {
+                        key.push(node.name.escapedText ?? "")
+                    }
+                }
 
-        const modulePath = node.moduleSpecifier.text;
-        const importClause = node.importClause;
-
-        if (!importClause) return;
-
-        if (importClause.name) {
-            this.importedFiles.set(importClause.name.text, modulePath);
-        } else if (importClause.namedBindings) {
-            if (ts.isNamedImports(importClause.namedBindings)) {
-                importClause.namedBindings.elements.forEach((element) => {
-                    const name = element.propertyName?.text || element.name.text;
-                    this.importedFiles.set(name, modulePath);
-                });
-            } else if (ts.isNamespaceImport(importClause.namedBindings)) {
-                this.importedFiles.set(importClause.namedBindings.name.text, modulePath);
+            });
+        }
+        console.log("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, key)
+        if (ts.isStringLiteral(node.moduleSpecifier)) {
+            if (key.length > 0) {
+                this.importedFiles.set(key, node.moduleSpecifier.text)
             }
         }
+        const mapArr = [...this.importedFiles]
+        mapArr.forEach(([k, v]) => {
+            console.log(`resolveImportDeclaration importedFiles k-v: ${k} : ${v}`)
+        })
     }
 
     private resolveExportDeclaration(node: ts.ExportDeclaration) {
@@ -83,6 +124,12 @@ export class DecoratorParser {
                 const name = element.propertyName?.text || element.name.text;
                 this.exportedRedirects.set(name, modulePath);
             });
+        }
+
+        console.log('resolveExportDeclaration:', this.exportedRedirects);
+        if (this.fileParam && this.fileParam.indexed && this.exportedRedirects.has(this.fileParam.className)) {
+            this.fileParam.absolutePath = resolve(this.modulePath, modulePath);
+            console.log('resolveExportDeclaration fileParam:', this.fileParam);
         }
     }
 
@@ -103,6 +150,18 @@ export class DecoratorParser {
         this.currentResult.componentName = node.name?.escapedText as string;
         this.currentResult.filePath = this.filePath;
         console.log('resolveClassDeclaration:', node.name?.escapedText);
+
+        if (this.fileParam && node.name?.escapedText == this.fileParam.className) {
+            node?.members?.forEach((member) => {
+                if (ts.isPropertyDeclaration(member) && member.name
+                    && ts.isIdentifier(member.name)) {
+                    if (member.name.escapedText
+                        == this.fileParam?.attrName && member.initializer && ts.isStringLiteral(member.initializer)) {
+                        this.fileParam.attValue = member.initializer.text
+                    }
+                }
+            })
+        }
     }
 
     private parseAppRouterArgs(arg: ts.Expression): boolean {
@@ -113,7 +172,16 @@ export class DecoratorParser {
                 let value: string | boolean | undefined;
 
                 if (propName === appRouterAnnotation.name) {
-                    if (ts.isIdentifier(prop.initializer) && this.importedFiles.has(prop.initializer.text)) {
+                    let importedvalue = false;
+                    if (ts.isIdentifier(prop.initializer)) {
+                        for (const [key, value] of this.importedFiles) {
+                            if (key.includes(prop.initializer.text)) {
+                                importedvalue = true;
+                            }
+                        }
+                    }
+
+                    if (importedvalue && ts.isIdentifier(prop.initializer)) {
                         value = this.resolveImportedConstant(prop.initializer.text);
                     } else if (ts.isPropertyAccessExpression(prop.initializer)) {
                         value = this.resolveConstant(prop.initializer);
@@ -143,12 +211,21 @@ export class DecoratorParser {
         return (this.currentResult.name?.length || 0) > 0;
     }
 
-    private resolveImportedConstant(identifier: string): string | undefined {
-        const modulePath = this.importedFiles.get(identifier);
-        if (!modulePath) return undefined;
 
-        const absolutePath = this.resolveModulePath(modulePath);
+    private resolveImportedConstant(identifier: string): string | undefined {
+        let path: string | undefined = undefined;
+        for (const [key, value] of this.importedFiles) {
+            if (key.includes(identifier)) {
+                path = value;
+            }
+        }
+        if (!path) return undefined;
+        console.log('resolveImportedConstant path:', path);
+
+        let absolutePath = resolve(this.modulePath, path);
         if (!absolutePath) return undefined;
+        absolutePath = absolutePath.endsWith('.ets') ? absolutePath : (absolutePath + '.ets');
+        console.log('resolveImportedConstant absolutePath:', absolutePath);
 
         try {
             const targetCode = readFileSync(absolutePath, 'utf-8');
@@ -174,136 +251,40 @@ export class DecoratorParser {
             console.error(`Failed to resolve imported constant ${identifier} in ${absolutePath}:`, e);
             return undefined;
         }
+
     }
 
-    private resolveConstant(expr: ts.PropertyAccessExpression): string | undefined {
-        const symbolName = ts.isIdentifier(expr.expression) ? expr.expression.text : undefined;
-        const propertyName = expr.name.text;
-
-        if (!symbolName) return undefined;
-
-        let modulePath = this.importedFiles.get(symbolName);
-        if (!modulePath) return undefined;
-
-        let absolutePath = this.resolveModulePath(modulePath);
-        if (!absolutePath) return undefined;
-
-        try {
-            let targetCode = readFileSync(absolutePath, 'utf-8');
-            let targetFile = ts.createSourceFile(
-                absolutePath,
-                targetCode,
-                ts.ScriptTarget.ES2021,
-                false
-            );
-
-            let constantValue: string | undefined;
-            let redirectModulePath: string | undefined;
-
-            ts.forEachChild(targetFile, (node) => {
-                if (ts.isExportDeclaration(node)) {
-                    if (
-                        node.moduleSpecifier &&
-                        ts.isStringLiteral(node.moduleSpecifier) &&
-                        node.exportClause &&
-                        ts.isNamedExports(node.exportClause)
-                    ) {
-                        node.exportClause.elements.forEach((element) => {
-                            if (element.name.text === symbolName && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-                                redirectModulePath = node.moduleSpecifier.text;
-                            }
-                        });
-                    }
-                } else if (ts.isClassDeclaration(node)) {
-                    node.members.forEach((member) => {
-                        if (
-                            ts.isPropertyDeclaration(member) &&
-                            ts.isIdentifier(member.name) &&
-                            member.name.text === propertyName &&
-                            member.modifiers?.some((mod) => mod.kind === ts.SyntaxKind.StaticKeyword) &&
-                            member.initializer
-                        ) {
-                            constantValue = this.getLiteralValue(member.initializer) as string;
-                        }
-                    });
-                } else if (ts.isVariableStatement(node)) {
-                    node.declarationList.declarations.forEach((decl) => {
-                        if (ts.isIdentifier(decl.name) && decl.name.text === propertyName && decl.initializer) {
-                            constantValue = this.getLiteralValue(decl.initializer) as string;
-                        }
-                    });
-                }
-            });
-
-            if (redirectModulePath && !constantValue) {
-                const redirectAbsolutePath = this.resolveModulePath(redirectModulePath);
-                if (redirectAbsolutePath) {
-                    const redirectCode = readFileSync(redirectAbsolutePath, 'utf-8');
-                    const redirectFile = ts.createSourceFile(
-                        redirectAbsolutePath,
-                        redirectCode,
-                        ts.ScriptTarget.ES2021,
-                        false
-                    );
-
-                    ts.forEachChild(redirectFile, (node) => {
-                        if (ts.isClassDeclaration(node)) {
-                            node.members.forEach((member) => {
-                                if (
-                                    ts.isPropertyDeclaration(member) &&
-                                    ts.isIdentifier(member.name) &&
-                                    member.name.text === propertyName &&
-                                    member.modifiers?.some((mod) => mod.kind === ts.SyntaxKind.StaticKeyword) &&
-                                    member.initializer
-                                ) {
-                                    constantValue = this.getLiteralValue(member.initializer) as string;
-                                }
-                            });
-                        } else if (ts.isVariableStatement(node)) {
-                            node.declarationList.declarations.forEach((decl) => {
-                                if (ts.isIdentifier(decl.name) && decl.name.text === propertyName && decl.initializer) {
-                                    constantValue = this.getLiteralValue(decl.initializer) as string;
-                                }
-                            });
-                        }
-                    });
-                }
-            }
-
-            return constantValue;
-        } catch (e) {
-            console.error(`Failed to resolve constant ${symbolName}.${propertyName} in ${absolutePath}:`, e);
-            return undefined;
+    private resolveConstant(initializer: ts.PropertyAccessExpression): string | undefined {
+        const fileParam = new ScanFileParam()
+        fileParam.indexed = false;
+        let constValue = ""
+        if (ts.isIdentifier(initializer.expression)) {
+            fileParam.className = initializer.expression.escapedText ?? ""
         }
-    }
+        if (ts.isIdentifier(initializer.name)) {
+            fileParam.attrName = initializer.name.escapedText ?? ""
+        }
 
-    private resolveModulePath(modulePath: string): string | undefined {
-        const baseDir = dirname(this.filePath);
-        let resolvedPath: string;
-
-        if (modulePath.startsWith('.')) {
-            resolvedPath = resolve(baseDir, modulePath);
-        } else {
-            try {
-                resolvedPath = require.resolve(modulePath, { paths: [baseDir] });
-            } catch (e) {
-                console.error(`Failed to resolve module ${modulePath} from ${baseDir}:`, e);
-                return undefined;
+        for (const [key, value] of this.importedFiles) {
+            if (key.includes(fileParam.className)) {
+                fileParam.importPath = value
+                fileParam.absolutePath = this.getImportAbsolutePathByOHPackage(value, fileParam);
             }
         }
 
-        const extensions = ['.ts', '.ets', '.js'];
-        for (const ext of extensions) {
-            const candidatePath = resolvedPath.endsWith(ext) ? resolvedPath : `${resolvedPath}${ext}`;
-            try {
-                readFileSync(candidatePath, 'utf-8');
-                return candidatePath;
-            } catch (e) { }
+        console.log('resolveConstant:', fileParam);
+        console.log('importedFiles:', this.importedFiles);
+
+        if (fileParam.importPath.length > 0 && fileParam.absolutePath.length > 0) {
+            const parser = new DecoratorParser(this.modulePath, fileParam.absolutePath, fileParam);
+            const results = parser.parse();
+            console.log('resolveConstant results:', fileParam);
         }
 
-        console.error(`No valid file found for ${resolvedPath} with extensions ${extensions.join(', ')}`);
-        return undefined;
+        return fileParam.attValue;
     }
+
+
 
     private getLiteralValue(expr: ts.Expression): string | boolean | undefined {
         if (ts.isStringLiteral(expr)) {
@@ -316,5 +297,38 @@ export class DecoratorParser {
             return false;
         }
         return undefined;
+    }
+
+    private getImportAbsolutePathByOHPackage(packageName: string, fileParam: ScanFileParam): string {
+        console.log('getImportAbsolutePathByOHPackage:', packageName);
+        if (packageName.startsWith('.')) {
+            const path = resolve(this.modulePath, packageName);
+            return path.endsWith('.ets') ? path : (path + '.ets');
+        }
+
+        const packagePath = `${this.modulePath}/oh-package.json5`;
+        console.log('getImportAbsolutePathByOHPackage packagePath:', packagePath);
+        if (!fs.existsSync(packagePath)) {
+            return "";
+        }
+        const data = fs.readFileSync(packagePath, { encoding: "utf8" })
+        const json = JSON5.parse(data)
+        console.log('getImportAbsolutePathByOHPackage json:', json);
+        const dependencies = json.dependencies || {}
+        let path = dependencies[packageName]
+        if (path.startsWith('file:')) { // local package
+            path = path.replace('file:', '');
+        }
+
+        const newfileParam = Object.assign({}, fileParam);
+        newfileParam.indexed = true;
+        const index = resolve(this.modulePath, path) + '/Index.ets';
+        const parser = new DecoratorParser(dirname(index), index, newfileParam);
+        const results = parser.parse();
+        console.log('getImportAbsolutePathByOHPackage index results:', newfileParam);
+        if (newfileParam.absolutePath.length > 0) {
+            return newfileParam.absolutePath.endsWith('.ets') ? newfileParam.absolutePath : (newfileParam.absolutePath + '.ets');
+        }
+        return "";
     }
 }

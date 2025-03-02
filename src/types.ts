@@ -18,3 +18,13 @@ export class AnalyzeResult {
     hasParam: boolean = false;
     paramName: string = 'routerParam';
 }
+
+
+export class ScanFileParam {
+    className: string = '';
+    importPath: string = '';
+    absolutePath: string = '';
+    attrName: string = '';
+    attValue: string = '';
+    indexed: boolean = true;
+}

@@ -32,7 +32,7 @@ class ViewInfo {
     // 路由名，自定义装饰器中配置的参数值
     name!: string;
     // 自定义组件的名字
-    viewName?: string;
+    componentName?: string;
     // import路径
     importPath?: string;
     // 组件注册方法名
@@ -129,10 +129,14 @@ function pluginExec(config: PluginConfig) {
             sourcePath = sourcePath + '.ets';
         }
         // 获取文件相对路径
-        const filePath = path.relative(`${config.modulePath}/${config.builderDir}`, sourcePath).replaceAll("\\", "/")
+        const importPath = path.relative(`${config.modulePath}/${config.builderDir}`, sourcePath).replaceAll("\\", "/")
             .replaceAll(".ets", "");
-        const parser = new DecoratorParser(filePath);
+        console.log(`sourcePath:${sourcePath}`);
+        console.log(`importPath:${importPath}`);
+        const parser = new DecoratorParser(config.modulePath, sourcePath);
         const results = parser.parse();
+        console.log(`results:${JSON.stringify(results, null, '\t')}`);
+
         // 如果解析的文件中存在装饰器，则将结果保存到列表中
         if (results && results.length > 0) {
             for (let i = 0; i < results.length; i++) {
@@ -140,8 +144,8 @@ function pluginExec(config: PluginConfig) {
                 templateModel.routers.push({
                     view: {
                         name: analyzer.name,
-                        viewName: analyzer.componentName,
-                        importPath: analyzer.filePath,
+                        componentName: analyzer.componentName,
+                        importPath: importPath,
                         hasParam: analyzer.hasParam,
                         paramName: analyzer.paramName,
                     },
@@ -161,6 +165,8 @@ function pluginExec(config: PluginConfig) {
             }
             
         }
+
+        console.log(`templateModel:${JSON.stringify(templateModel, null, '\t')}`);
 
     })
     // 生成路由方法文件

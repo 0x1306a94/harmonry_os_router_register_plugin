@@ -1,18 +1,23 @@
 // auto-generated
 {{#each routers}}
-import { {{view.viewName}} } from '{{view.importPath}}'
+import { {{view.componentName}} } from '{{view.importPath}}'
 {{/each}}
 
 {{#each routers}}
 @Builder
-function {{view.functionName}}Builder({{view.param}}) {
-  {{#if view.param}}
+{{#if view.hasParam}}
+function {{view.componentName}}Builder(param: ESObject) {
+{{else}}
+function {{view.componentName}}Builder() {
+{{/if}}
+  {{#if view.hasParam}}
     {{#if view.paramName}}
-    {{view.viewName}}({ {{view.paramName}}: param });
+    {{view.componentName}}({ {{view.paramName}}: param });
     {{else}}
-    {{view.viewName}}({routeParams: param});
+    {{view.componentName}}({routeParams: param});
     {{/if}}
   {{else}}
-    {{view.viewName}}();
+    {{view.componentName}}();
   {{/if}}
 }
+{{/each}}

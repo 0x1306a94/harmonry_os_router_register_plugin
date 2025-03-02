@@ -11,7 +11,9 @@ const appRouterAnnotation = new AppRouterAnnotation();
 export { appRouterAnnotation };
 
 export class AnalyzeResult {
-    name?: string;
+    name!: string;
+    componentName!: string;
+    filePath!: string;
     login: boolean = false;
     hasParam: boolean = false;
     paramName: string = 'routerParam';

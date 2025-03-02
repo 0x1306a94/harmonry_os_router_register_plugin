@@ -8,6 +8,7 @@ export class DecoratorParser {
     private results: AnalyzeResult[] = [];
     private importedFiles: Map<string, string> = new Map();
     private exportedRedirects: Map<string, string> = new Map();
+    private currentResult: AnalyzeResult = new AnalyzeResult();
 
     constructor(filePath: string) {
         this.filePath = filePath;
@@ -34,10 +35,14 @@ export class DecoratorParser {
     }
 
     private resolveNode(node: ts.Node) {
-        if (node.kind === ts.SyntaxKind.Decorator) {
-            const decoratorResult = this.parseDecorator(node as ts.Decorator);
-            if (decoratorResult) {
-                this.results.push(decoratorResult);
+        console.log('node kind:', node.kind);
+        if (ts.isClassDeclaration(node)) {
+            this.resolveClassDeclaration(node);
+        } else if (node.kind === ts.SyntaxKind.Decorator) {
+            const success = this.parseDecorator(node as ts.Decorator);
+            if (success) {
+                console.log('currentResult:', this.currentResult);
+                this.results.push(this.currentResult);
             }
         } else if (node.kind === ts.SyntaxKind.ImportDeclaration) {
             this.resolveImportDeclaration(node as ts.ImportDeclaration);
@@ -82,59 +87,61 @@ export class DecoratorParser {
         }
     }
 
-    private parseDecorator(decorator: ts.Decorator): AnalyzeResult | null {
+    private parseDecorator(decorator: ts.Decorator): boolean {
         const expression = decorator.expression;
-        if (!ts.isCallExpression(expression)) return null;
+        if (!ts.isCallExpression(expression)) return false;
 
         const identifier = expression.expression;
-        if (!ts.isIdentifier(identifier) || !appRouterAnnotation.annotations.includes(identifier.text)) return null;
+        if (!ts.isIdentifier(identifier) || !appRouterAnnotation.annotations.includes(identifier.text)) return false;
 
-        if (expression.arguments.length === 0) return null;
-
+        if (expression.arguments.length === 0) return false;
         const arg = expression.arguments[0];
         return this.parseAppRouterArgs(arg);
     }
 
-    private parseAppRouterArgs(arg: ts.Expression): AnalyzeResult {
-        const result = new AnalyzeResult();
+    private resolveClassDeclaration(node: ts.ClassDeclaration) {
+        this.currentResult = new AnalyzeResult();
+        this.currentResult.componentName = node.name?.escapedText as string;
+        this.currentResult.filePath = this.filePath;
+        console.log('resolveClassDeclaration:', node.name?.escapedText);
+    }
 
-        if (ts.isObjectLiteralExpression(arg)) {
-            arg.properties.forEach((prop) => {
-                if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-                    const propName = prop.name.text;
-                    let value: string | boolean | undefined;
+    private parseAppRouterArgs(arg: ts.Expression): boolean {
+        if (!ts.isObjectLiteralExpression(arg)) return false;
+        arg.properties.forEach((prop) => {
+            if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
+                const propName = prop.name.text;
+                let value: string | boolean | undefined;
 
-                    if (propName === appRouterAnnotation.name) {
-                        if (ts.isIdentifier(prop.initializer) && this.importedFiles.has(prop.initializer.text)) {
-                            value = this.resolveImportedConstant(prop.initializer.text);
-                        } else if (ts.isPropertyAccessExpression(prop.initializer)) {
-                            value = this.resolveConstant(prop.initializer);
-                        } else {
-                            value = this.getLiteralValue(prop.initializer);
-                        }
+                if (propName === appRouterAnnotation.name) {
+                    if (ts.isIdentifier(prop.initializer) && this.importedFiles.has(prop.initializer.text)) {
+                        value = this.resolveImportedConstant(prop.initializer.text);
+                    } else if (ts.isPropertyAccessExpression(prop.initializer)) {
+                        value = this.resolveConstant(prop.initializer);
                     } else {
                         value = this.getLiteralValue(prop.initializer);
                     }
-
-                    switch (propName) {
-                        case appRouterAnnotation.name:
-                            result.name = value as string;
-                            break;
-                        case appRouterAnnotation.login:
-                            result.login = value as boolean;
-                            break;
-                        case appRouterAnnotation.hasParam:
-                            result.hasParam = value as boolean;
-                            break;
-                        case appRouterAnnotation.paramName:
-                            result.paramName = value as string;
-                            break;
-                    }
+                } else {
+                    value = this.getLiteralValue(prop.initializer);
                 }
-            });
-        }
 
-        return result;
+                switch (propName) {
+                    case appRouterAnnotation.name:
+                        this.currentResult.name = value as string;
+                        break;
+                    case appRouterAnnotation.login:
+                        this.currentResult.login = value as boolean;
+                        break;
+                    case appRouterAnnotation.hasParam:
+                        this.currentResult.hasParam = value as boolean;
+                        break;
+                    case appRouterAnnotation.paramName:
+                        this.currentResult.paramName = value as string;
+                        break;
+                }
+            }
+        });
+        return (this.currentResult.name?.length || 0) > 0;
     }
 
     private resolveImportedConstant(identifier: string): string | undefined {

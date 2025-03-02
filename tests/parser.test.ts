@@ -29,6 +29,8 @@ describe('DecoratorParser with Constants', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({
       name: 'login/PasswordLogin',
+      componentName: 'PasswordLogin',
+      filePath: mainFilePath,
       login: false,
       hasParam: true,
       paramName: 'userId',
@@ -56,6 +58,8 @@ describe('DecoratorParser with Constants', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({
       name: 'login/PasswordLogin',
+      componentName: 'PasswordLogin',
+      filePath: mainFilePath,
       login: false,
       hasParam: true,
       paramName: 'userId',
@@ -87,6 +91,8 @@ describe('DecoratorParser with Constants', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({
       name: 'login/PasswordLogin',
+      componentName: 'PasswordLogin',
+      filePath: mainFilePath,
       login: false,
       hasParam: true,
       paramName: 'userId',
@@ -98,7 +104,7 @@ describe('DecoratorParser with Constants', () => {
       import { RouterConstants } from 'external-package';
       @AppRouter({ name: RouterConstants.LOGIN_PAGE, hasParam: true, paramName: "userId" })
       @Compent
-      export struct PasswordLogin {}
+      export class PasswordLogin {}
     `;
     const indexCode = `
       export { RouterConstants } from './constants';
@@ -125,6 +131,8 @@ describe('DecoratorParser with Constants', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({
       name: 'login/PasswordLogin',
+      componentName: 'PasswordLogin',
+      filePath: mainFilePath,
       login: false,
       hasParam: true,
       paramName: 'userId',

@@ -10,7 +10,7 @@ import { DecoratorParser } from './parser';
 const PLUGIN_ID = "auto-router-generator-plugin";
 const ROUTER_BUILDER_PATH = "src/main/ets/auto_router_generated";
 const ROUTER_BUILDER_NAME = "RouterBuilder.ets";
-const ROUTER_MAP_PATH = "src/main/resources/rawfile/routerMap";
+const ROUTER_MAP_PATH = "src/main/resources/base/profile";
 const ROUTER_ANNOTATION_NAME = "AppRouter";
 const ROUTER_BUILDER_TEMPLATE = "viewBuilder.tpl";
 
@@ -24,39 +24,47 @@ interface TemplateModel {
 
 interface TemplateRouterModel {
     view: ViewInfo;
-    router: RouterInfo;
+    router: RouterItem;
 }
 
 // 用于生成组件注册类
-class ViewInfo {
+interface ViewInfo {
     // 路由名，自定义装饰器中配置的参数值
-    name!: string;
+    name: string;
     // 自定义组件的名字
-    componentName?: string;
+    componentName: string;
     // import路径
-    importPath?: string;
+    importPath: string;
     // 组件注册方法名
-    functionName?: string;
+    buildFunction: string;
     // 方法是否有参数
-    hasParam?: boolean;
+    hasParam: boolean;
     // 参数名称
-    paramName?: string;
+    paramName: string;
 }
 
-class RouterInfo {
+interface RouterItem {
     // 路由名，自定义装饰器中配置的参数值
-    name?: string;
-    // 模块名
-    pageModule?: string;
+    name: string;
     // 加载的页面的路径
-    pageSourceFile?: string;
+    pageSourceFile: string;
     // 注册路由的方法
-    registerFunction?: string;
+    buildFunction: string;
+    // 元信息
+    data?: RouterMetadata;
+}
+
+interface RouterMetadata {
+    description?: string;
+    moduleName?: string;
+    login?: string;
+    hasParam?: string;
+    paramName?: string;
 }
 
 // 路由表
 interface RouterMap {
-    routerMap: RouterInfo[];
+    routerMap: RouterItem[];
 }
 
 
@@ -68,7 +76,7 @@ export class PluginConfig {
     // 注册路由的方法的文件路径
     builderDir?: string;
     // 路由表所在路径
-    routerMapDir?: string;
+    routerMapDir: string = 'src/main/resources/rawfile';
     // 模块名
     moduleName!: string;
     // 模块路径
@@ -103,6 +111,15 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
             pluginExec(pluginConfig);
         }
     }
+}
+
+export function testAutoRouterGeneratorPlugin( pluginConfig: PluginConfig) {
+    pluginConfig.annotation = ROUTER_ANNOTATION_NAME;
+    pluginConfig.builderTpl = ROUTER_BUILDER_TEMPLATE;
+    pluginConfig.routerMapDir = ROUTER_MAP_PATH;
+    pluginConfig.builderDir = ROUTER_BUILDER_PATH;
+    pluginConfig.builderFileName = ROUTER_BUILDER_NAME;
+    pluginExec(pluginConfig);
 }
 
 // 解析插件开始执行
@@ -148,22 +165,27 @@ function pluginExec(config: PluginConfig) {
                         importPath: importPath,
                         hasParam: analyzer.hasParam,
                         paramName: analyzer.paramName,
+                        buildFunction: `${analyzer.componentName}Builder`
                     },
                     router: {
                         name: analyzer.name,
-                        pageModule: config.moduleName,
                         pageSourceFile: `${config.builderDir}/${config.builderFileName}`,
-                        registerFunction: `${analyzer.componentName}Register`
+                        buildFunction: `${analyzer.componentName}Builder`
                     }
                 });
                 routerMap.routerMap.push({
                     name: analyzer.name,
-                    pageModule: config.moduleName,
                     pageSourceFile: `${config.builderDir}/${config.builderFileName}`,
-                    registerFunction: `${analyzer.componentName}Register`
+                    buildFunction: `${analyzer.componentName}Builder`,
+                    data: {
+                        moduleName: config.moduleName,
+                        login: analyzer.login.toString(),
+                        hasParam: analyzer.hasParam.toString(),
+                        paramName: analyzer.paramName,
+                    }
                 });
             }
-            
+
         }
 
         console.log(`templateModel:${JSON.stringify(templateModel, null, '\t')}`);
@@ -199,12 +221,12 @@ function generateBuilder(templateModel: TemplateModel, config: PluginConfig) {
 
 // 以json的格式生成路由表
 function generateRouterMap(routerMap: RouterMap, config: PluginConfig) {
-    const jsonOutput = JSON.stringify(routerMap, null, 2);
+    const jsonOutput = JSON.stringify(routerMap, null, '\t');
     const routerMapDir = `${config.modulePath}/${config.routerMapDir}`;
     if (!existsSync(routerMapDir)) {
         mkdirSync(routerMapDir, { recursive: true });
     }
-    writeFileSync(`${routerMapDir}/${config.moduleName}.json`, jsonOutput, { encoding: "utf8" });
+    writeFileSync(`${routerMapDir}/route_map.json`, jsonOutput, { encoding: "utf8" });
 }
 
 // 生成Index.ets，导出路由方法

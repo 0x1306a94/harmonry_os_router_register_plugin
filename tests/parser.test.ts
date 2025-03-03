@@ -12,12 +12,16 @@ function createTempFile(content: string, ext: string = '.ts'): string {
 describe('DecoratorParser with Constants', () => {
   it('should parse AppRouter with local constant', () => {
     const mainCode = `
-      import { LOGIN_PAGE } from './constants';
+      import { LOGIN_PAGE,SMS_PAGE } from './constants';
       @AppRouter({ name: LOGIN_PAGE, hasParam: true, paramName: "userId" })
       export struct PasswordLogin {}
+
+      @AppRouter({ name: SMS_PAGE, hasParam: true, paramName: "userId" })
+      export struct SMSLogin {}
     `;
     const constantsCode = `
       export const LOGIN_PAGE = "login/PasswordLogin";
+      export const SMS_PAGE = "login/SMSLogin";
     `;
     const mainFilePath = createTempFile(mainCode);
     const tempDir = dirname(mainFilePath);
@@ -28,7 +32,7 @@ describe('DecoratorParser with Constants', () => {
     const results = parser.parse();
     console.log('results:', results);
 
-    expect(results).toHaveLength(1);
+    expect(results).toHaveLength(2);
     expect(results[0]).toEqual({
       name: 'login/PasswordLogin',
       componentName: 'PasswordLogin',
@@ -37,9 +41,17 @@ describe('DecoratorParser with Constants', () => {
       hasParam: true,
       paramName: 'userId',
     });
+
+    expect(results[1]).toEqual({
+      name: 'login/SMSLogin',
+      componentName: 'SMSLogin',
+      filePath: mainFilePath,
+      login: false,
+      hasParam: true,
+      paramName: 'userId',
+    });
   });
 
-  return;
 
   it('should parse AppRouter with local class constant', () => {
     const mainCode = `

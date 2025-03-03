@@ -4,17 +4,77 @@ import { readFileSync } from 'fs';
 import { AnalyzeResult, appRouterAnnotation, ScanFileParam } from './types';
 import { resolve, dirname } from 'path';
 import JSON5 from 'json5';
-import { join } from 'node:path';
+
+
+/*
+
+  在线ast查看器
+  https://ts-ast-viewer.com/#code/KYDwDg9gTgLgBAbzgGQPIHECSA5A+gBQEF0BRAGgAlUBZEg4kuAXzgDMoIBbOAcgDoA9AGMIAOwDOMAIaiY4ngG4AUAEtOkWIhQYc9UszYdu-YWMky5i1eujw0WPEX2GuvQSInTZ85Wo3wkACUIAFcYYCgAYTMvOQN2Vx4AAQBrFNNOTjErP1s4YLCI6M8LcRdjVPSRTOzlJMIwMALwqAAKJFEpTmAALm0HPXI4AAspcXwpKC6+mCgQ4DI4MEmu7C7euAAiEPEIzAATTeYASiVQfzhJOaF4CfFxAHdofeQIAHMVUUQmJSV6xuaEXacE63T6gKiMVKfHsuicQ1G4xWnBmcwWS2RazBWx2e0OJz+0RsomAsjO4DyVxCNzgAGVqLTXh8vggfr9-k1Qi1gaCNjxYdgeItERMpii4LN5otlmKsRttrsoAcjkxTuc8kIADZjMoANX1uqZn2+QA
+  
+  对于下面示例
+  
+  @AppRouter({ name: LOGIN_PAGE, hasParam: true, paramName: "userId" })
+  export struct PasswordLogin {}
+  
+  ast 顺序为 对应状态变化 INIT -> PARSE_DECORATORS -> FIND_STRUCT -> INIT
+    - SourceFile
+        - MissingDeclaration
+            - Decorator
+        - ExpressionStatement 'struct'
+        - ExpressionStatement 'PasswordLogin'
+
+  @AppRouter({ name: LOGIN_PAGE, hasParam: true, paramName: "userId" })
+  export class PasswordLogin {}
+
+  ast 顺序为 对应状态变化 INIT -> FIND_CLASS -> PARSE_DECORATORS -> INIT
+    - SourceFile
+        - ClassDeclaration
+            - Decorator
+
+
+ */
+
+enum ParserState {
+    INIT,
+    FIND_STRUCT,
+    FIND_CLASS,
+    PARSE_DECORATORS,
+}
+
+class Stack<T> {
+    private items: T[] = [];
+    push(item: T): void {
+        this.items.push(item);
+    }
+
+    pop(): T | undefined {
+        return this.items.pop();
+    }
+
+    peek(): T | undefined {
+        return this.items[this.items.length - 1];
+    }
+
+    isEmpty(): boolean {
+        return this.items.length === 0;
+    }
+
+    size(): number {
+        return this.items.length;
+    }
+}
+
 
 export class DecoratorParser {
     private modulePath: string;
     private filePath: string;
     private results: AnalyzeResult[] = [];
-    private importedFiles: Map<string[], string> = new Map();
-    private exportedRedirects: Map<string, string> = new Map();
-    private currentResult: AnalyzeResult = new AnalyzeResult();
+    private importedFiles: Map<Set<string>, string> = new Map();
+    private exportedRedirects: Map<Set<string>, string> = new Map();
     private fileParam: ScanFileParam | undefined = undefined;
-    private structed: boolean = false;
+
+    private state: ParserState = ParserState.INIT;
+    private stack: Stack<AnalyzeResult> = new Stack();
 
     constructor(modulePath: string, filePath: string, fileParam?: ScanFileParam) {
         this.modulePath = modulePath;
@@ -43,15 +103,10 @@ export class DecoratorParser {
     }
 
     private resolveNode(node: ts.Node) {
-        // console.log('resolveNode:', node);
         if (ts.isClassDeclaration(node)) {
             this.resolveClassDeclaration(node);
         } else if (node.kind === ts.SyntaxKind.Decorator) {
-            const success = this.parseDecorator(node as ts.Decorator);
-            if (success && this.currentResult.componentName && this.currentResult.componentName.length > 0) {
-                console.log('currentResult:', this.currentResult);
-                this.results.push(this.currentResult);
-            }
+            this.parseDecorator(node as ts.Decorator);
         } else if (node.kind === ts.SyntaxKind.ImportDeclaration) {
             this.resolveImportDeclaration(node as ts.ImportDeclaration);
         } else if (node.kind === ts.SyntaxKind.ExportDeclaration) {
@@ -63,27 +118,27 @@ export class DecoratorParser {
     }
 
     private resolveIdentifier(node: ts.Identifier) {
-        console.log('resolveExpression:', node);
-        if (this.structed && node.escapedText && this.currentResult.name) {
-            this.currentResult.componentName = node.escapedText as string;
-            this.currentResult.filePath = this.filePath;
-            this.structed = false;
-            console.log('currentResult:', this.currentResult);
-            this.results.push(this.currentResult);
+        if (this.state == ParserState.FIND_STRUCT && node.escapedText) {
+            let result = this.stack.peek();
+            if (result) {
+                result.componentName = node.escapedText;
+                this.results.push(result);
+            }
+            this.state = ParserState.INIT;
             return;
         }
 
-        if (node.escapedText == 'struct') {
-            this.structed = true;
+        if (node.escapedText == 'struct' && this.state == ParserState.PARSE_DECORATORS) {
+            this.state = ParserState.FIND_STRUCT;
         }
     }
 
     private resolveImportDeclaration(node: ts.ImportDeclaration) {
-        const key: string[] = []
+        const names: Set<string> = new Set();
         if (node.importClause?.namedBindings == undefined && node.importClause?.name != undefined) {
             // import MyModule from './MyModule';
             if (ts.isIdentifier(node.importClause.name)) {
-                key.push(node.importClause.name.escapedText ?? "")
+                names.add(node.importClause.name.escapedText ?? "")
             }
         } else {
             node.importClause?.namedBindings?.forEachChild(child => {
@@ -91,65 +146,102 @@ export class DecoratorParser {
                     // import { ExportedItem1, ExportedItem2 } from './MyModule';
                     // import { ExportedItem as RenamedItem } from './MyModule';
                     if (ts.isIdentifier(child.name)) {
-                        key.push(child.name.escapedText ?? "")
+                        names.add(child.name.escapedText ?? "")
                     }
                 } else if (ts.isNamespaceImport(child)) {
                     // import * as MyModule from './MyModule';
                     const node = child as ts.NamespaceImport
                     if (ts.isIdentifier(node.name)) {
-                        key.push(node.name.escapedText ?? "")
+                        names.add(node.name.escapedText ?? "")
                     }
                 }
 
             });
         }
-        console.log("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, key)
+        console.info("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, names)
         if (ts.isStringLiteral(node.moduleSpecifier)) {
-            if (key.length > 0) {
-                this.importedFiles.set(key, node.moduleSpecifier.text)
+            if (names.size > 0) {
+                this.importedFiles.set(names, node.moduleSpecifier.text)
+                console.info(`resolveImportDeclaration importedFiles k-v: ${names} : ${node.moduleSpecifier.text}`)
+
             }
         }
-        const mapArr = [...this.importedFiles]
-        mapArr.forEach(([k, v]) => {
-            console.log(`resolveImportDeclaration importedFiles k-v: ${k} : ${v}`)
-        })
     }
 
     private resolveExportDeclaration(node: ts.ExportDeclaration) {
         if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) return;
 
+        const names: Set<string> = new Set();
+
         const modulePath = node.moduleSpecifier.text;
         if (node.exportClause && ts.isNamedExports(node.exportClause)) {
             node.exportClause.elements.forEach((element) => {
                 const name = element.propertyName?.text || element.name.text;
-                this.exportedRedirects.set(name, modulePath);
+                names.add(name);
             });
         }
 
-        console.log('resolveExportDeclaration:', this.exportedRedirects);
-        if (this.fileParam && this.fileParam.indexed && this.exportedRedirects.has(this.fileParam.className)) {
-            this.fileParam.absolutePath = resolve(this.modulePath, modulePath);
-            console.log('resolveExportDeclaration fileParam:', this.fileParam);
+        console.info('resolveExportDeclaration moduleSpecifier:', node.moduleSpecifier.kind, names);
+        if (ts.isStringLiteral(node.moduleSpecifier)) {
+            if (names.size > 0) {
+                this.exportedRedirects.set(names, node.moduleSpecifier.text)
+                console.info(`resolveExportDeclaration exportedRedirects k-v: ${names} : ${node.moduleSpecifier.text}`)
+
+            }
+        }
+
+        if (this.fileParam && this.fileParam.indexed) {
+            for (const [key, value] of this.exportedRedirects) {
+                if (key.has(this.fileParam.className)) {
+                    this.fileParam.absolutePath = resolve(this.modulePath, modulePath);
+                    console.info('resolveExportDeclaration fileParam:', this.fileParam);
+                    break;
+                }
+            }
+
         }
     }
 
-    private parseDecorator(decorator: ts.Decorator): boolean {
+    private parseDecorator(decorator: ts.Decorator) {
+        if (![ParserState.INIT, ParserState.FIND_CLASS].includes(this.state)) return;
+
         const expression = decorator.expression;
-        if (!ts.isCallExpression(expression)) return false;
+        if (!ts.isCallExpression(expression)) return;
 
         const identifier = expression.expression;
-        if (!ts.isIdentifier(identifier) || !appRouterAnnotation.annotations.includes(identifier.text)) return false;
+        if (!ts.isIdentifier(identifier) || !appRouterAnnotation.annotations.includes(identifier.text)) return;
 
-        if (expression.arguments.length === 0) return false;
+        if (expression.arguments.length === 0) return;
         const arg = expression.arguments[0];
-        return this.parseAppRouterArgs(arg);
+        let result: AnalyzeResult;
+        if (this.state == ParserState.INIT) {
+            result = new AnalyzeResult();
+            result.filePath = this.filePath;
+            this.stack.push(result);
+        } else {
+            result = this.stack.pop()!;
+        }
+        const isParsed = this.parseAppRouterArgs(arg, result);
+        if (isParsed && this.state === ParserState.FIND_CLASS) {
+            this.results.push(result);
+            this.state = ParserState.INIT;
+            return;
+
+        } else if (isParsed && this.state === ParserState.INIT) {
+            this.state = ParserState.PARSE_DECORATORS;
+        }
+        return;
     }
 
     private resolveClassDeclaration(node: ts.ClassDeclaration) {
-        this.currentResult = new AnalyzeResult();
-        this.currentResult.componentName = node.name?.escapedText as string;
-        this.currentResult.filePath = this.filePath;
-        console.log('resolveClassDeclaration:', node.name?.escapedText);
+
+        let result = new AnalyzeResult();
+        result.componentName = node.name?.escapedText as string;
+        result.filePath = this.filePath;
+        this.stack.push(result);
+        console.info('resolveClassDeclaration:', node.name?.escapedText);
+        this.state = ParserState.FIND_CLASS;
+
 
         if (this.fileParam && node.name?.escapedText == this.fileParam.className) {
             node?.members?.forEach((member) => {
@@ -164,7 +256,7 @@ export class DecoratorParser {
         }
     }
 
-    private parseAppRouterArgs(arg: ts.Expression): boolean {
+    private parseAppRouterArgs(arg: ts.Expression, result: AnalyzeResult): boolean {
         if (!ts.isObjectLiteralExpression(arg)) return false;
         arg.properties.forEach((prop) => {
             if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
@@ -175,7 +267,7 @@ export class DecoratorParser {
                     let importedvalue = false;
                     if (ts.isIdentifier(prop.initializer)) {
                         for (const [key, value] of this.importedFiles) {
-                            if (key.includes(prop.initializer.text)) {
+                            if (key.has(prop.initializer.text)) {
                                 importedvalue = true;
                             }
                         }
@@ -194,38 +286,38 @@ export class DecoratorParser {
 
                 switch (propName) {
                     case appRouterAnnotation.name:
-                        this.currentResult.name = value as string;
+                        result.name = value as string;
                         break;
                     case appRouterAnnotation.login:
-                        this.currentResult.login = value as boolean;
+                        result.login = value as boolean;
                         break;
                     case appRouterAnnotation.hasParam:
-                        this.currentResult.hasParam = value as boolean;
+                        result.hasParam = value as boolean;
                         break;
                     case appRouterAnnotation.paramName:
-                        this.currentResult.paramName = value as string;
+                        result.paramName = value as string;
                         break;
                 }
             }
         });
-        return (this.currentResult.name?.length || 0) > 0;
+        return (result.name?.length || 0) > 0;
     }
 
 
     private resolveImportedConstant(identifier: string): string | undefined {
         let path: string | undefined = undefined;
         for (const [key, value] of this.importedFiles) {
-            if (key.includes(identifier)) {
+            if (key.has(identifier)) {
                 path = value;
             }
         }
         if (!path) return undefined;
-        console.log('resolveImportedConstant path:', path);
+        console.info('resolveImportedConstant path:', path);
 
         let absolutePath = resolve(this.modulePath, path);
         if (!absolutePath) return undefined;
         absolutePath = absolutePath.endsWith('.ets') ? absolutePath : (absolutePath + '.ets');
-        console.log('resolveImportedConstant absolutePath:', absolutePath);
+        console.info('resolveImportedConstant absolutePath:', absolutePath);
 
         try {
             const targetCode = readFileSync(absolutePath, 'utf-8');
@@ -266,19 +358,19 @@ export class DecoratorParser {
         }
 
         for (const [key, value] of this.importedFiles) {
-            if (key.includes(fileParam.className)) {
+            if (key.has(fileParam.className)) {
                 fileParam.importPath = value
                 fileParam.absolutePath = this.getImportAbsolutePathByOHPackage(value, fileParam);
             }
         }
 
-        console.log('resolveConstant:', fileParam);
-        console.log('importedFiles:', this.importedFiles);
+        console.info('resolveConstant:', fileParam);
+        console.info('importedFiles:', this.importedFiles);
 
         if (fileParam.importPath.length > 0 && fileParam.absolutePath.length > 0) {
             const parser = new DecoratorParser(this.modulePath, fileParam.absolutePath, fileParam);
             const results = parser.parse();
-            console.log('resolveConstant results:', fileParam);
+            console.info('resolveConstant results:', fileParam);
         }
 
         return fileParam.attValue;
@@ -300,20 +392,20 @@ export class DecoratorParser {
     }
 
     private getImportAbsolutePathByOHPackage(packageName: string, fileParam: ScanFileParam): string {
-        console.log('getImportAbsolutePathByOHPackage:', packageName);
+        console.info('getImportAbsolutePathByOHPackage:', packageName);
         if (packageName.startsWith('.')) {
             const path = resolve(this.modulePath, packageName);
             return path.endsWith('.ets') ? path : (path + '.ets');
         }
 
         const packagePath = `${this.modulePath}/oh-package.json5`;
-        console.log('getImportAbsolutePathByOHPackage packagePath:', packagePath);
+        console.info('getImportAbsolutePathByOHPackage packagePath:', packagePath);
         if (!fs.existsSync(packagePath)) {
             return "";
         }
         const data = fs.readFileSync(packagePath, { encoding: "utf8" })
         const json = JSON5.parse(data)
-        console.log('getImportAbsolutePathByOHPackage json:', json);
+        console.info('getImportAbsolutePathByOHPackage json:', json);
         const dependencies = json.dependencies || {}
         let path = dependencies[packageName]
         if (path.startsWith('file:')) { // local package
@@ -325,7 +417,7 @@ export class DecoratorParser {
         const index = resolve(this.modulePath, path) + '/Index.ets';
         const parser = new DecoratorParser(dirname(index), index, newfileParam);
         const results = parser.parse();
-        console.log('getImportAbsolutePathByOHPackage index results:', newfileParam);
+        console.info('getImportAbsolutePathByOHPackage index results:', newfileParam);
         if (newfileParam.absolutePath.length > 0) {
             return newfileParam.absolutePath.endsWith('.ets') ? newfileParam.absolutePath : (newfileParam.absolutePath + '.ets');
         }

@@ -6,9 +6,9 @@ import { {{view.componentName}} } from '{{view.importPath}}'
 {{#each routers}}
 @Builder
 {{#if view.hasParam}}
-function {{view.componentName}}Builder(param: ESObject) {
+function {{view.buildFunction}}(name: string, param: ESObject) {
 {{else}}
-function {{view.componentName}}Builder() {
+function {{view.buildFunction}}() {
 {{/if}}
   {{#if view.hasParam}}
     {{#if view.paramName}}

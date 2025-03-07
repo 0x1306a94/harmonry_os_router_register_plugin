@@ -69,12 +69,14 @@ export class DecoratorParser {
     private modulePath: string;
     private filePath: string;
     private results: AnalyzeResult[] = [];
-    private importedFiles: Map<Set<string>, string> = new Map();
-    private exportedRedirects: Map<Set<string>, string> = new Map();
+    private importedFiles: Map<Array<string>, string> = new Map();
+    private exportedRedirects: Map<Array<string>, string> = new Map();
     private fileParam: ScanFileParam | undefined = undefined;
 
     private state: ParserState = ParserState.INIT;
     private stack: Stack<AnalyzeResult> = new Stack();
+
+    private abort = false;
 
     constructor(modulePath: string, filePath: string, fileParam?: ScanFileParam) {
         this.modulePath = modulePath;
@@ -103,6 +105,7 @@ export class DecoratorParser {
     }
 
     private resolveNode(node: ts.Node) {
+        if (this.abort) return;
         if (ts.isClassDeclaration(node)) {
             this.resolveClassDeclaration(node);
         } else if (node.kind === ts.SyntaxKind.Decorator) {
@@ -114,6 +117,7 @@ export class DecoratorParser {
         } else if (node.kind === ts.SyntaxKind.Identifier) {
             this.resolveIdentifier(node as ts.Identifier);
         }
+        if (this.abort) return;
         ts.forEachChild(node, (child) => this.resolveNode(child));
     }
 
@@ -134,11 +138,11 @@ export class DecoratorParser {
     }
 
     private resolveImportDeclaration(node: ts.ImportDeclaration) {
-        const names: Set<string> = new Set();
+        const names: Array<string> = new Array();
         if (node.importClause?.namedBindings == undefined && node.importClause?.name != undefined) {
             // import MyModule from './MyModule';
             if (ts.isIdentifier(node.importClause.name)) {
-                names.add(node.importClause.name.escapedText ?? "")
+                names.push(node.importClause.name.escapedText ?? "")
             }
         } else {
             node.importClause?.namedBindings?.forEachChild(child => {
@@ -146,13 +150,13 @@ export class DecoratorParser {
                     // import { ExportedItem1, ExportedItem2 } from './MyModule';
                     // import { ExportedItem as RenamedItem } from './MyModule';
                     if (ts.isIdentifier(child.name)) {
-                        names.add(child.name.escapedText ?? "")
+                        names.push(child.name.escapedText ?? "")
                     }
                 } else if (ts.isNamespaceImport(child)) {
                     // import * as MyModule from './MyModule';
                     const node = child as ts.NamespaceImport
                     if (ts.isIdentifier(node.name)) {
-                        names.add(node.name.escapedText ?? "")
+                        names.push(node.name.escapedText ?? "")
                     }
                 }
 
@@ -160,7 +164,7 @@ export class DecoratorParser {
         }
         console.info("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, names)
         if (ts.isStringLiteral(node.moduleSpecifier)) {
-            if (names.size > 0) {
+            if (names.length > 0) {
                 this.importedFiles.set(names, node.moduleSpecifier.text)
                 console.info(`resolveImportDeclaration importedFiles k-v: ${names} : ${node.moduleSpecifier.text}`)
 
@@ -171,19 +175,19 @@ export class DecoratorParser {
     private resolveExportDeclaration(node: ts.ExportDeclaration) {
         if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) return;
 
-        const names: Set<string> = new Set();
+        const names: Array<string> = new Array();
 
         const modulePath = node.moduleSpecifier.text;
         if (node.exportClause && ts.isNamedExports(node.exportClause)) {
             node.exportClause.elements.forEach((element) => {
                 const name = element.propertyName?.text || element.name.text;
-                names.add(name);
+                names.push(name);
             });
         }
 
         console.info('resolveExportDeclaration moduleSpecifier:', node.moduleSpecifier.kind, names);
         if (ts.isStringLiteral(node.moduleSpecifier)) {
-            if (names.size > 0) {
+            if (names.length > 0) {
                 this.exportedRedirects.set(names, node.moduleSpecifier.text)
                 console.info(`resolveExportDeclaration exportedRedirects k-v: ${names} : ${node.moduleSpecifier.text}`)
 
@@ -192,10 +196,13 @@ export class DecoratorParser {
 
         if (this.fileParam && this.fileParam.indexed) {
             for (const [key, value] of this.exportedRedirects) {
-                if (key.has(this.fileParam.className)) {
+                if (key.includes(this.fileParam.className)) {
                     this.fileParam.absolutePath = resolve(this.modulePath, modulePath);
                     console.info('resolveExportDeclaration fileParam:', this.fileParam);
-                    break;
+                    if (this.fileParam.absolutePath.length > 0) {
+                        this.abort = true;
+                        return;
+                    }
                 }
             }
 
@@ -247,8 +254,7 @@ export class DecoratorParser {
             node?.members?.forEach((member) => {
                 if (ts.isPropertyDeclaration(member) && member.name
                     && ts.isIdentifier(member.name)) {
-                    if (member.name.escapedText
-                        == this.fileParam?.attrName && member.initializer && ts.isStringLiteral(member.initializer)) {
+                    if (member.name.escapedText == this.fileParam?.attrName && member.initializer && ts.isStringLiteral(member.initializer)) {
                         this.fileParam.attValue = member.initializer.text
                     }
                 }
@@ -267,7 +273,7 @@ export class DecoratorParser {
                     let importedvalue = false;
                     if (ts.isIdentifier(prop.initializer)) {
                         for (const [key, value] of this.importedFiles) {
-                            if (key.has(prop.initializer.text)) {
+                            if (key.includes(prop.initializer.text)) {
                                 importedvalue = true;
                             }
                         }
@@ -305,19 +311,20 @@ export class DecoratorParser {
 
 
     private resolveImportedConstant(identifier: string): string | undefined {
+        console.info(`resolveImportedConstant ${identifier} importedFiles: ${this.importedFiles}`);
         let path: string | undefined = undefined;
         for (const [key, value] of this.importedFiles) {
-            if (key.has(identifier)) {
+            if (key.includes(identifier)) {
                 path = value;
             }
         }
         if (!path) return undefined;
-        console.info('resolveImportedConstant path:', path);
+        console.info(`resolveImportedConstant ${identifier} path: ${path}`);
 
         let absolutePath = resolve(this.modulePath, path);
         if (!absolutePath) return undefined;
         absolutePath = absolutePath.endsWith('.ets') ? absolutePath : (absolutePath + '.ets');
-        console.info('resolveImportedConstant absolutePath:', absolutePath);
+        console.info(`resolveImportedConstant ${identifier} absolutePath: ${absolutePath}`);
 
         try {
             const targetCode = readFileSync(absolutePath, 'utf-8');
@@ -357,23 +364,24 @@ export class DecoratorParser {
             fileParam.attrName = initializer.name.escapedText ?? ""
         }
 
+        console.info(`resolveConstant: className: ${fileParam.className} attrName: ${fileParam.attrName} importedFiles: ${JSON.stringify(this.importedFiles, null, '\t')}`);
+
         for (const [key, value] of this.importedFiles) {
-            if (key.has(fileParam.className)) {
+            if (key.includes(fileParam.className)) {
                 fileParam.importPath = value
                 fileParam.absolutePath = this.getImportAbsolutePathByOHPackage(value, fileParam);
+                if (fileParam.importPath.length > 0 && fileParam.absolutePath.length > 0) {
+                    const parser = new DecoratorParser(this.modulePath, fileParam.absolutePath, fileParam);
+                    const results = parser.parse();
+                    console.info('resolveConstant results:', fileParam);
+                    if (fileParam.attValue.length > 0) {
+                        return fileParam.attValue;
+                    }
+                }
             }
         }
 
-        console.info('resolveConstant:', fileParam);
-        console.info('importedFiles:', this.importedFiles);
-
-        if (fileParam.importPath.length > 0 && fileParam.absolutePath.length > 0) {
-            const parser = new DecoratorParser(this.modulePath, fileParam.absolutePath, fileParam);
-            const results = parser.parse();
-            console.info('resolveConstant results:', fileParam);
-        }
-
-        return fileParam.attValue;
+        return undefined;
     }
 
 

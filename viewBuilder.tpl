@@ -1,4 +1,7 @@
 // auto-generated
+
+import { RouterRegister } from '{{libName}}'
+
 {{#each routers}}
 import { {{view.componentName}} } from '{{view.importPath}}'
 {{/each}}
@@ -6,9 +9,9 @@ import { {{view.componentName}} } from '{{view.importPath}}'
 {{#each routers}}
 @Builder
 {{#if view.hasParam}}
-function {{view.buildFunction}}(name: string, param: ESObject) {
+export function {{view.buildFunction}}(param: ESObject) {
 {{else}}
-function {{view.buildFunction}}() {
+export function {{view.buildFunction}}() {
 {{/if}}
   {{#if view.hasParam}}
     {{#if view.paramName}}
@@ -21,3 +24,9 @@ function {{view.buildFunction}}() {
   {{/if}}
 }
 {{/each}}
+
+export function {{moduleName}}RegisterAllRouters() {
+  {{#each routers}}
+    RouterRegister.registerBuilder("{{router.name}}", wrapBuilder({{view.buildFunction}}) as WrappedBuilder<[ESObject]>);
+  {{/each}}
+}

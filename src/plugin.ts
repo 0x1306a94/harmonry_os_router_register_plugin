@@ -19,6 +19,9 @@ const ROUTER_BUILDER_TEMPLATE = "viewBuilder.tpl";
 interface TemplateModel {
     // 模块名称
     moduleName: string;
+    // libraries名称
+    libName: string;
+    // 路由信息
     routers: TemplateRouterModel[];
 }
 
@@ -79,6 +82,8 @@ export class PluginConfig {
     routerMapDir: string = 'src/main/resources/rawfile';
     // 模块名
     moduleName!: string;
+    // libraries名称
+    libName: string = "autorouter";
     // 模块路径
     modulePath!: string;
     // 装饰器名称
@@ -113,7 +118,7 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
     }
 }
 
-export function testAutoRouterGeneratorPlugin( pluginConfig: PluginConfig) {
+export function testAutoRouterGeneratorPlugin(pluginConfig: PluginConfig) {
     pluginConfig.annotation = ROUTER_ANNOTATION_NAME;
     pluginConfig.builderTpl = ROUTER_BUILDER_TEMPLATE;
     pluginConfig.routerMapDir = ROUTER_MAP_PATH;
@@ -124,15 +129,18 @@ export function testAutoRouterGeneratorPlugin( pluginConfig: PluginConfig) {
 
 // 解析插件开始执行
 function pluginExec(config: PluginConfig) {
-    console.log("plugin exec...");
+    console.log(`plugin exec config:\n${JSON.stringify(config, null, '\t')}`);
 
     if (config.scanFiles === undefined) {
         return;
     }
+
     const templateModel: TemplateModel = {
         moduleName: config.moduleName,
+        libName: config.libName,
         routers: []
     };
+
     const routerMap: RouterMap = {
         routerMap: []
     };
@@ -209,6 +217,7 @@ function generateBuilder(templateModel: TemplateModel, config: PluginConfig) {
     const template = Handlebars.compile(tpl);
     const output = template({
         moduleName: config.moduleName,
+        libName: templateModel.libName,
         routers: templateModel.routers
     });
 

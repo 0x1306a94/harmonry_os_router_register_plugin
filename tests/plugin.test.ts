@@ -12,13 +12,14 @@ describe('Plugin with tests', () => {
         const modulePath = resolve(__dirname, '../sample/feature/home');
 
         console.log(`moduleName:${moduleName},modulePath:${modulePath}`);
-        const pluginConfig = new PluginConfig();
-        pluginConfig.mainTarget = false;
-        pluginConfig.moduleName = moduleName;
-        pluginConfig.modulePath = modulePath;
-        pluginConfig.scanFiles = [
-            'src/main/ets/components/HomePage.ets'
-        ];
+        let pluginConfig: PluginConfig = {
+            mainTarget: false,
+            moduleName: moduleName,
+            modulePath: modulePath,
+            scanFiles: [
+                'src/main/ets/components/HomePage.ets'
+            ],
+        };
 
         testAutoRouterGeneratorPlugin(pluginConfig);
     });

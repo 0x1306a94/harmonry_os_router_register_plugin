@@ -13,7 +13,7 @@ const ROUTER_BUILDER_NAME = "RouterBuilder.ets";
 const ROUTER_MAP_PATH = "src/main/resources/base/profile";
 const ROUTER_ANNOTATION_NAME = "AppRouter";
 const ROUTER_BUILDER_TEMPLATE = "viewBuilder.tpl";
-
+const ROUTER_LIB_NAME = "autorouter";
 
 
 interface TemplateModel {
@@ -72,20 +72,20 @@ interface RouterMap {
 
 
 // 配置文件，在hvigor中配置
-export class PluginConfig {
-    mainTarget: boolean = false;
+export interface PluginConfig {
+    mainTarget?: boolean;
     // 注册路由的方法的文件名
     builderFileName?: string;
     // 注册路由的方法的文件路径
     builderDir?: string;
     // 路由表所在路径
-    routerMapDir: string = 'src/main/resources/rawfile';
+    routerMapDir?: string;
     // 模块名
-    moduleName!: string;
+    moduleName: string;
     // libraries名称
-    libName: string = "autorouter";
+    libName?: string;
     // 模块路径
-    modulePath!: string;
+    modulePath: string;
     // 装饰器名称
     annotation?: string;
     // 扫描的文件路径
@@ -94,16 +94,20 @@ export class PluginConfig {
     viewKeyword?: string[];
     // 生成代码模板
     builderTpl?: string;
+
 }
 
 
 // hvigor中配置的插件方法
 export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlugin {
-    pluginConfig.annotation = ROUTER_ANNOTATION_NAME;
-    pluginConfig.builderTpl = ROUTER_BUILDER_TEMPLATE;
-    pluginConfig.routerMapDir = ROUTER_MAP_PATH;
-    pluginConfig.builderDir = ROUTER_BUILDER_PATH;
-    pluginConfig.builderFileName = ROUTER_BUILDER_NAME;
+    pluginConfig.routerMapDir = pluginConfig.routerMapDir ?? ROUTER_MAP_PATH;
+    pluginConfig.libName = pluginConfig.libName ?? ROUTER_LIB_NAME;
+    pluginConfig.annotation = pluginConfig.annotation ?? ROUTER_ANNOTATION_NAME;
+    pluginConfig.builderTpl = pluginConfig.builderTpl ?? ROUTER_BUILDER_TEMPLATE;
+    pluginConfig.builderDir = pluginConfig.builderDir ?? ROUTER_BUILDER_PATH;
+    pluginConfig.builderFileName = pluginConfig.builderFileName ?? ROUTER_BUILDER_NAME;
+
+
     return {
         pluginId: PLUGIN_ID,
         apply(node: HvigorNode) {
@@ -119,11 +123,13 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
 }
 
 export function testAutoRouterGeneratorPlugin(pluginConfig: PluginConfig) {
-    pluginConfig.annotation = ROUTER_ANNOTATION_NAME;
-    pluginConfig.builderTpl = ROUTER_BUILDER_TEMPLATE;
-    pluginConfig.routerMapDir = ROUTER_MAP_PATH;
-    pluginConfig.builderDir = ROUTER_BUILDER_PATH;
-    pluginConfig.builderFileName = ROUTER_BUILDER_NAME;
+    pluginConfig.routerMapDir = pluginConfig.routerMapDir ?? ROUTER_MAP_PATH;
+    pluginConfig.libName = pluginConfig.libName ?? ROUTER_LIB_NAME;
+    pluginConfig.annotation = pluginConfig.annotation ?? ROUTER_ANNOTATION_NAME;
+    pluginConfig.builderTpl = pluginConfig.builderTpl ?? ROUTER_BUILDER_TEMPLATE;
+    pluginConfig.builderDir = pluginConfig.builderDir ?? ROUTER_BUILDER_PATH;
+    pluginConfig.builderFileName = pluginConfig.builderFileName ?? ROUTER_BUILDER_NAME;
+    
     pluginExec(pluginConfig);
 }
 
@@ -137,7 +143,7 @@ function pluginExec(config: PluginConfig) {
 
     const templateModel: TemplateModel = {
         moduleName: config.moduleName,
-        libName: config.libName,
+        libName: config.libName!,
         routers: []
     };
 

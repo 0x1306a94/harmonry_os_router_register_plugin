@@ -1,11 +1,13 @@
-import { HvigorNode, HvigorPlugin } from '@ohos/hvigor';
+import { HvigorNode, HvigorPlugin, hvigor } from '@ohos/hvigor';
 
 import * as path from 'path';
 import { constants, readFileSync } from 'node:fs';
-import Handlebars from 'handlebars';
+import Handlebars, { K, logger } from 'handlebars';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 
 import { DecoratorParser } from './parser';
+
+import { Logger } from './logger';
 
 const PLUGIN_ID = "auto-router-generator-plugin";
 const ROUTER_BUILDER_PATH = "src/main/ets/auto_router_generated";
@@ -70,6 +72,10 @@ interface RouterMap {
     routerMap: RouterItem[];
 }
 
+interface ENVConfig {
+    module: string;
+    product: string;
+}
 
 // 配置文件，在hvigor中配置
 export interface PluginConfig {
@@ -90,10 +96,14 @@ export interface PluginConfig {
     annotation?: string;
     // 扫描的文件路径
     scanFiles?: string[];
+    // 特别的扫描文件，比如内部debug文件
+    specialScanFiles?: Record<string, string[]>;
     // 查找生成struct的关键字
     viewKeyword?: string[];
     // 生成代码模板
     builderTpl?: string;
+    // 是否开启日志
+    enableLog?: boolean;
 
 }
 
@@ -111,12 +121,16 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
     return {
         pluginId: PLUGIN_ID,
         apply(node: HvigorNode) {
-            console.log(`Exec: ${PLUGIN_ID} ${__dirname}`);
-            console.log(`node:${node.getNodeName()},nodePath:${node.getNodePath()}`);
+
+            Logger.setEnable(pluginConfig.enableLog ?? false);
+
+            Logger.log(`Exec: ${PLUGIN_ID} ${__dirname}`);
+            Logger.log(`node:${node.getNodeName()},nodePath:${node.getNodePath()}`);
             // 获取模块名
             pluginConfig.moduleName = node.getNodeName();
             // 获取模块路径
             pluginConfig.modulePath = node.getNodePath();
+
             pluginExec(pluginConfig);
         }
     }
@@ -129,13 +143,14 @@ export function testAutoRouterGeneratorPlugin(pluginConfig: PluginConfig) {
     pluginConfig.builderTpl = pluginConfig.builderTpl ?? ROUTER_BUILDER_TEMPLATE;
     pluginConfig.builderDir = pluginConfig.builderDir ?? ROUTER_BUILDER_PATH;
     pluginConfig.builderFileName = pluginConfig.builderFileName ?? ROUTER_BUILDER_NAME;
-    
+    Logger.setEnable(pluginConfig.enableLog ?? false);
+
     pluginExec(pluginConfig);
 }
 
 // 解析插件开始执行
 function pluginExec(config: PluginConfig) {
-    console.log(`plugin exec config:\n${JSON.stringify(config, null, '\t')}`);
+    Logger.log(`plugin exec config:\n${JSON.stringify(config, null, '\t')}`);
 
     if (config.scanFiles === undefined) {
         return;
@@ -152,8 +167,22 @@ function pluginExec(config: PluginConfig) {
     };
 
 
+
+    let scanFiles = config.scanFiles ?? [];
+    Logger.info(`process.env: ${JSON.stringify(process.env, null, '\t')}`);
+    if (process.env.config && config.specialScanFiles) {
+        const envConfig = JSON.parse(process.env.config) as ENVConfig;
+        for (const key in config.specialScanFiles) {
+            if (envConfig.product === key || (envConfig.module && envConfig.module.endsWith(`@${key}`))) {
+                const files = config.specialScanFiles[key];
+                Logger.info(`specialScanFiles: key ${key} files ${JSON.stringify(files)}`);
+                scanFiles = scanFiles.concat(files);
+            }
+        }
+    }
+
     // 遍历需要扫描的文件列表
-    config.scanFiles.forEach((file) => {
+    scanFiles.forEach((file) => {
         // 文件绝对路径
         let sourcePath = `${config.modulePath}/${file}`;
         if (!sourcePath.endsWith('.ets')) {
@@ -162,11 +191,11 @@ function pluginExec(config: PluginConfig) {
         // 获取文件相对路径
         const importPath = path.relative(`${config.modulePath}/${config.builderDir}`, sourcePath).replaceAll("\\", "/")
             .replaceAll(".ets", "");
-        console.log(`sourcePath:${sourcePath}`);
-        console.log(`importPath:${importPath}`);
+        Logger.log(`sourcePath:${sourcePath}`);
+        Logger.log(`importPath:${importPath}`);
         const parser = new DecoratorParser(config.modulePath, sourcePath);
         const results = parser.parse();
-        console.log(`results:${JSON.stringify(results, null, '\t')}`);
+        Logger.log(`results:${JSON.stringify(results, null, '\t')}`);
 
         // 如果解析的文件中存在装饰器，则将结果保存到列表中
         if (results && results.length > 0) {
@@ -202,7 +231,7 @@ function pluginExec(config: PluginConfig) {
 
         }
 
-        console.log(`templateModel:${JSON.stringify(templateModel, null, '\t')}`);
+        Logger.log(`templateModel:${JSON.stringify(templateModel, null, '\t')}`);
 
     })
     // 生成路由方法文件
@@ -217,7 +246,7 @@ function pluginExec(config: PluginConfig) {
 
 // 根据模板生成路由方法文件
 function generateBuilder(templateModel: TemplateModel, config: PluginConfig) {
-    console.log(JSON.stringify(templateModel));
+    Logger.log(JSON.stringify(templateModel));
     const builderPath = path.resolve(__dirname, `../${config.builderTpl}`);
     const tpl = readFileSync(builderPath, { encoding: "utf8" });
     const template = Handlebars.compile(tpl);

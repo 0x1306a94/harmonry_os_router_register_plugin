@@ -16,6 +16,7 @@ describe('Plugin with tests', () => {
             mainTarget: false,
             moduleName: moduleName,
             modulePath: modulePath,
+            enableLog: true,
             scanFiles: [
                 'src/main/ets/components/HomePage.ets'
             ],

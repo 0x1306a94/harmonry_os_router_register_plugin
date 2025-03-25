@@ -5,6 +5,7 @@ import { AnalyzeResult, appRouterAnnotation, ScanFileParam } from './types';
 import { resolve, dirname } from 'path';
 import JSON5 from 'json5';
 
+import { Logger } from './logger';
 
 /*
 
@@ -97,7 +98,7 @@ export class DecoratorParser {
             try {
                 this.resolveNode(node);
             } catch (e) {
-                console.error('forEachChild error: ', e);
+                Logger.error('forEachChild error: ', e);
             }
         });
 
@@ -162,11 +163,11 @@ export class DecoratorParser {
 
             });
         }
-        console.info("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, names)
+        Logger.info("resolveImportDeclaration moduleSpecifier: ", node.moduleSpecifier.kind, names)
         if (ts.isStringLiteral(node.moduleSpecifier)) {
             if (names.length > 0) {
                 this.importedFiles.set(names, node.moduleSpecifier.text)
-                console.info(`resolveImportDeclaration importedFiles k-v: ${names} : ${node.moduleSpecifier.text}`)
+                Logger.info(`resolveImportDeclaration importedFiles k-v: ${names} : ${node.moduleSpecifier.text}`)
 
             }
         }
@@ -185,11 +186,11 @@ export class DecoratorParser {
             });
         }
 
-        console.info('resolveExportDeclaration moduleSpecifier:', node.moduleSpecifier.kind, names);
+        Logger.info('resolveExportDeclaration moduleSpecifier:', node.moduleSpecifier.kind, names);
         if (ts.isStringLiteral(node.moduleSpecifier)) {
             if (names.length > 0) {
                 this.exportedRedirects.set(names, node.moduleSpecifier.text)
-                console.info(`resolveExportDeclaration exportedRedirects k-v: ${names} : ${node.moduleSpecifier.text}`)
+                Logger.info(`resolveExportDeclaration exportedRedirects k-v: ${names} : ${node.moduleSpecifier.text}`)
 
             }
         }
@@ -198,7 +199,7 @@ export class DecoratorParser {
             for (const [key, value] of this.exportedRedirects) {
                 if (key.includes(this.fileParam.className)) {
                     this.fileParam.absolutePath = resolve(this.modulePath, modulePath);
-                    console.info('resolveExportDeclaration fileParam:', this.fileParam);
+                    Logger.info('resolveExportDeclaration fileParam:', this.fileParam);
                     if (this.fileParam.absolutePath.length > 0) {
                         this.abort = true;
                         return;
@@ -246,7 +247,7 @@ export class DecoratorParser {
         result.componentName = node.name?.escapedText as string;
         result.filePath = this.filePath;
         this.stack.push(result);
-        console.info('resolveClassDeclaration:', node.name?.escapedText);
+        Logger.info('resolveClassDeclaration:', node.name?.escapedText);
         this.state = ParserState.FIND_CLASS;
 
 
@@ -311,7 +312,7 @@ export class DecoratorParser {
 
 
     private resolveImportedConstant(identifier: string): string | undefined {
-        console.info(`resolveImportedConstant ${identifier} importedFiles: ${this.importedFiles}`);
+        Logger.info(`resolveImportedConstant ${identifier} importedFiles: ${this.importedFiles}`);
         let path: string | undefined = undefined;
         for (const [key, value] of this.importedFiles) {
             if (key.includes(identifier)) {
@@ -319,12 +320,12 @@ export class DecoratorParser {
             }
         }
         if (!path) return undefined;
-        console.info(`resolveImportedConstant ${identifier} path: ${path}`);
+        Logger.info(`resolveImportedConstant ${identifier} path: ${path}`);
 
         let absolutePath = resolve(this.modulePath, path);
         if (!absolutePath) return undefined;
         absolutePath = absolutePath.endsWith('.ets') ? absolutePath : (absolutePath + '.ets');
-        console.info(`resolveImportedConstant ${identifier} absolutePath: ${absolutePath}`);
+        Logger.info(`resolveImportedConstant ${identifier} absolutePath: ${absolutePath}`);
 
         try {
             const targetCode = readFileSync(absolutePath, 'utf-8');
@@ -347,7 +348,7 @@ export class DecoratorParser {
             });
             return constantValue;
         } catch (e) {
-            console.error(`Failed to resolve imported constant ${identifier} in ${absolutePath}:`, e);
+            Logger.error(`Failed to resolve imported constant ${identifier} in ${absolutePath}:`, e);
             return undefined;
         }
 
@@ -364,7 +365,7 @@ export class DecoratorParser {
             fileParam.attrName = initializer.name.escapedText ?? ""
         }
 
-        console.info(`resolveConstant: className: ${fileParam.className} attrName: ${fileParam.attrName} importedFiles: ${JSON.stringify(this.importedFiles, null, '\t')}`);
+        Logger.info(`resolveConstant: className: ${fileParam.className} attrName: ${fileParam.attrName} importedFiles: ${JSON.stringify(this.importedFiles, null, '\t')}`);
 
         for (const [key, value] of this.importedFiles) {
             if (key.includes(fileParam.className)) {
@@ -373,7 +374,7 @@ export class DecoratorParser {
                 if (fileParam.importPath.length > 0 && fileParam.absolutePath.length > 0) {
                     const parser = new DecoratorParser(this.modulePath, fileParam.absolutePath, fileParam);
                     const results = parser.parse();
-                    console.info('resolveConstant results:', fileParam);
+                    Logger.info('resolveConstant results:', fileParam);
                     if (fileParam.attValue.length > 0) {
                         return fileParam.attValue;
                     }
@@ -400,20 +401,20 @@ export class DecoratorParser {
     }
 
     private getImportAbsolutePathByOHPackage(packageName: string, fileParam: ScanFileParam): string {
-        console.info('getImportAbsolutePathByOHPackage:', packageName);
+        Logger.info('getImportAbsolutePathByOHPackage:', packageName);
         if (packageName.startsWith('.')) {
             const path = resolve(this.modulePath, packageName);
             return path.endsWith('.ets') ? path : (path + '.ets');
         }
 
         const packagePath = `${this.modulePath}/oh-package.json5`;
-        console.info('getImportAbsolutePathByOHPackage packagePath:', packagePath);
+        Logger.info('getImportAbsolutePathByOHPackage packagePath:', packagePath);
         if (!fs.existsSync(packagePath)) {
             return "";
         }
         const data = fs.readFileSync(packagePath, { encoding: "utf8" })
         const json = JSON5.parse(data)
-        console.info('getImportAbsolutePathByOHPackage json:', json);
+        Logger.info('getImportAbsolutePathByOHPackage json:', json);
         const dependencies = json.dependencies || {}
         let path = dependencies[packageName]
         if (path.startsWith('file:')) { // local package
@@ -425,7 +426,7 @@ export class DecoratorParser {
         const index = resolve(this.modulePath, path) + '/Index.ets';
         const parser = new DecoratorParser(dirname(index), index, newfileParam);
         const results = parser.parse();
-        console.info('getImportAbsolutePathByOHPackage index results:', newfileParam);
+        Logger.info('getImportAbsolutePathByOHPackage index results:', newfileParam);
         if (newfileParam.absolutePath.length > 0) {
             return newfileParam.absolutePath.endsWith('.ets') ? newfileParam.absolutePath : (newfileParam.absolutePath + '.ets');
         }

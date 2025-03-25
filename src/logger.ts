@@ -11,6 +11,12 @@ export class Logger {
         }
     }
 
+    public static debug(message?: any, ...optionalParams: any[]) {
+        if (Logger.enable) {
+            console.debug(message, ...optionalParams);
+        }
+    }
+
     public static error(message?: any, ...optionalParams: any[]) {
         if (Logger.enable) {
             console.error(message, ...optionalParams);

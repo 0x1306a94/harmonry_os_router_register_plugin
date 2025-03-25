@@ -25,6 +25,7 @@
     "license": "MIT",
     "devDependencies": {
         "@ohos/hvigor": "^4.1.2",
+        "@ohos/hvigor-ohos-plugin": "^4.1.2",
         "@types/fs-extra": "^11.0.4",
         "@types/jest": "^29.5.12",
         "@types/json5": "^2.2.0",

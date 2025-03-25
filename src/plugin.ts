@@ -1,9 +1,11 @@
-import { HvigorNode, HvigorPlugin, hvigor } from '@ohos/hvigor';
+import { HvigorNode, HvigorPlugin, HvigorTaskContext, hvigor } from '@ohos/hvigor';
+import { harTasks, OhosHarContext, OhosHapContext, OhosHspContext, OhosPluginId, Target } from '@ohos/hvigor-ohos-plugin';
+
 
 import * as path from 'path';
 import { constants, readFileSync } from 'node:fs';
 import Handlebars, { K, logger } from 'handlebars';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, rmdirSync, writeFileSync } from 'fs';
 
 import { DecoratorParser } from './parser';
 
@@ -120,18 +122,55 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
 
     return {
         pluginId: PLUGIN_ID,
-        apply(node: HvigorNode) {
+        async apply(currentNode: HvigorNode): Promise<void> {
 
             Logger.setEnable(pluginConfig.enableLog ?? false);
 
             Logger.log(`Exec: ${PLUGIN_ID} ${__dirname}`);
-            Logger.log(`node:${node.getNodeName()},nodePath:${node.getNodePath()}`);
+            Logger.log(`node:${currentNode.getNodeName()},nodePath:${currentNode.getNodePath()}`);
             // 获取模块名
-            pluginConfig.moduleName = node.getNodeName();
+            pluginConfig.moduleName = currentNode.getNodeName();
             // 获取模块路径
-            pluginConfig.modulePath = node.getNodePath();
+            pluginConfig.modulePath = currentNode.getNodePath();
 
-            pluginExec(pluginConfig);
+            hvigor.nodesEvaluated(async () => {
+                const hapContext = currentNode.getContext(OhosPluginId.OHOS_HAP_PLUGIN) as OhosHapContext;
+                const hspContext = currentNode.getContext(OhosPluginId.OHOS_HSP_PLUGIN) as OhosHspContext;
+                const harContext = currentNode.getContext(OhosPluginId.OHOS_HAR_PLUGIN) as OhosHarContext;
+                Logger.log(`${PLUGIN_ID} hapContext: ${hapContext}`);
+                Logger.log(`${PLUGIN_ID} hspContext: ${hspContext}`);
+                Logger.log(`${PLUGIN_ID} harContext: ${harContext}`);
+
+                const moduleContext = hapContext ?? hspContext ?? harContext;
+
+                const moduleName = moduleContext.getModuleName();
+                Logger.log(`${PLUGIN_ID} moduleName: ${moduleName}`);
+
+
+                moduleContext?.targets((target: Target) => {
+                    const targetName = target.getTargetName();
+                    Logger.log(`${PLUGIN_ID} target: ${targetName}`);
+                    currentNode.registerTask({
+                        name: `${targetName}@GenRouter`,
+                        postDependencies: [`${targetName}@PreBuild`],
+                        run() {
+                            Logger.log(`${PLUGIN_ID} run ${targetName}@GenRouter`);
+                            pluginExec(pluginConfig);
+                        }
+                    });
+
+                    currentNode.registerTask({
+                        name: `${targetName}@CleanGenRouter`,
+                        postDependencies: ['clean'],
+                        run() {
+                            Logger.log(`${PLUGIN_ID} run ${targetName}@CleanGenRouter`);
+                            pluginClean(pluginConfig);
+                        }
+                    });
+                })
+
+
+            });
         }
     }
 }
@@ -146,6 +185,18 @@ export function testAutoRouterGeneratorPlugin(pluginConfig: PluginConfig) {
     Logger.setEnable(pluginConfig.enableLog ?? false);
 
     pluginExec(pluginConfig);
+}
+
+function pluginClean(config: PluginConfig) {
+    const routerMap: RouterMap = {
+        routerMap: []
+    };
+
+    cleanBuilder(config);
+    generateRouterMap(routerMap, config);
+    if (!config.mainTarget) {
+        cleanIndex(config);
+    }
 }
 
 // 解析插件开始执行
@@ -261,6 +312,25 @@ function generateBuilder(templateModel: TemplateModel, config: PluginConfig) {
         mkdirSync(routerBuilderDir, { recursive: true });
     }
     writeFileSync(`${routerBuilderDir}/${config.builderFileName}`, output, { encoding: "utf8" });
+}
+
+function cleanBuilder(config: PluginConfig) {
+    const routerBuilderDir = `${config.modulePath}/${config.builderDir}`;
+    if (existsSync(routerBuilderDir)) {
+        rmdirSync(routerBuilderDir, { recursive: true });
+    }
+    Logger.debug(`clean ${routerBuilderDir}`);
+}
+
+function cleanIndex(config: PluginConfig) {
+    const indexPath = `${config.modulePath}/Index.ets`;
+    if (!existsSync(indexPath)) {
+        return;
+    }
+    Logger.debug(`clean Index`);
+    let indexContent: string = readFileSync(indexPath, { encoding: "utf8" });
+    indexContent = indexContent.replaceAll(`export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`, '');
+    writeFileSync(indexPath, indexContent, { encoding: "utf8" });
 }
 
 // 以json的格式生成路由表

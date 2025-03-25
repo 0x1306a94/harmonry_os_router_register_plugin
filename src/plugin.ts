@@ -329,8 +329,15 @@ function cleanIndex(config: PluginConfig) {
     }
     Logger.debug(`clean Index`);
     let indexContent: string = readFileSync(indexPath, { encoding: "utf8" });
-    indexContent = indexContent.replaceAll(`export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`, '');
-    writeFileSync(indexPath, indexContent, { encoding: "utf8" });
+    let lines = indexContent.split('\n');
+    let insetLine = `export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`;
+    const index = lines.indexOf(insetLine);
+    if (index > -1) {
+        lines.splice(index, 1);
+    }
+
+    const modifyCotent = lines.join('\n');
+    writeFileSync(indexPath, modifyCotent, { encoding: "utf8" });
 }
 
 // 以json的格式生成路由表
@@ -350,8 +357,11 @@ function generateIndex(config: PluginConfig) {
         writeFileSync(indexPath, '', 'utf-8');
     }
     let indexContent: string = readFileSync(indexPath, { encoding: "utf8" });
-    if (!indexContent.includes(`export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`)) {
-        indexContent = indexContent + "\n" + `export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`;
+    let lines = indexContent.split('\n');
+    let insetLine = `export * from './${config.builderDir}/${config.builderFileName?.replace(".ets", "")}';`;
+    if (!lines.includes(insetLine)) {
+        lines.push(insetLine);
     }
-    writeFileSync(indexPath, indexContent, { encoding: "utf8" });
+    const modifyCotent = lines.join('\n');
+    writeFileSync(indexPath, modifyCotent, { encoding: "utf8" });
 }

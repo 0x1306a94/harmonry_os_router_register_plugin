@@ -221,16 +221,21 @@ function pluginExec(config: PluginConfig) {
 
     let scanFiles = config.scanFiles ?? [];
     Logger.info(`process.env: ${JSON.stringify(process.env, null, '\t')}`);
+    const specialScanFiles: Set<string> = new Set();
+
     if (process.env.config && config.specialScanFiles) {
         const envConfig = JSON.parse(process.env.config) as ENVConfig;
         for (const key in config.specialScanFiles) {
             if (envConfig.product === key || (envConfig.module && envConfig.module.endsWith(`@${key}`))) {
                 const files = config.specialScanFiles[key];
                 Logger.info(`specialScanFiles: key ${key} files ${JSON.stringify(files)}`);
-                scanFiles = scanFiles.concat(files);
+                files.forEach(item => specialScanFiles.add(item)); // 自动去重
             }
         }
     }
+
+    // 合并去重后的 specialScanFiles 到 scanFiles
+    scanFiles.push(...specialScanFiles);
 
     // 遍历需要扫描的文件列表
     scanFiles.forEach((file) => {

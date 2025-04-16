@@ -134,6 +134,8 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
             pluginConfig.modulePath = currentNode.getNodePath();
 
             hvigor.nodesEvaluated(async () => {
+                Logger.setEnable(pluginConfig.enableLog ?? false);
+
                 const hapContext = currentNode.getContext(OhosPluginId.OHOS_HAP_PLUGIN) as OhosHapContext;
                 const hspContext = currentNode.getContext(OhosPluginId.OHOS_HSP_PLUGIN) as OhosHspContext;
                 const harContext = currentNode.getContext(OhosPluginId.OHOS_HAR_PLUGIN) as OhosHarContext;
@@ -148,14 +150,16 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
 
 
                 moduleContext?.targets((target: Target) => {
+                    Logger.setEnable(pluginConfig.enableLog ?? false);
                     const targetName = target.getTargetName();
                     Logger.log(`${PLUGIN_ID} target: ${targetName}`);
                     currentNode.registerTask({
                         name: `${targetName}@GenRouter`,
                         postDependencies: [`${targetName}@PreBuild`],
                         run() {
+                            Logger.setEnable(pluginConfig.enableLog ?? false);
                             Logger.log(`${PLUGIN_ID} run ${targetName}@GenRouter`);
-                            pluginExec(pluginConfig);
+                            pluginExec(pluginConfig, targetName);
                         }
                     });
 
@@ -163,6 +167,7 @@ export function AutoRouterGeneratorPlugin(pluginConfig: PluginConfig): HvigorPlu
                         name: `${targetName}@CleanGenRouter`,
                         postDependencies: ['clean'],
                         run() {
+                            Logger.setEnable(pluginConfig.enableLog ?? false);
                             Logger.log(`${PLUGIN_ID} run ${targetName}@CleanGenRouter`);
                             pluginClean(pluginConfig);
                         }
@@ -200,7 +205,7 @@ function pluginClean(config: PluginConfig) {
 }
 
 // 解析插件开始执行
-function pluginExec(config: PluginConfig) {
+function pluginExec(config: PluginConfig, targetName?: string) {
     Logger.log(`plugin exec config:\n${JSON.stringify(config, null, '\t')}`);
 
     if (config.scanFiles === undefined) {
@@ -223,14 +228,23 @@ function pluginExec(config: PluginConfig) {
     Logger.info(`process.env: ${JSON.stringify(process.env, null, '\t')}`);
     const specialScanFiles: Set<string> = new Set();
 
-    if (process.env.config && config.specialScanFiles) {
-        const envConfig = JSON.parse(process.env.config) as ENVConfig;
-        for (const key in config.specialScanFiles) {
-            if (envConfig.product === key || (envConfig.module && envConfig.module.endsWith(`@${key}`))) {
-                const files = config.specialScanFiles[key];
-                Logger.info(`specialScanFiles: key ${key} files ${JSON.stringify(files)}`);
-                files.forEach(item => specialScanFiles.add(item)); // 自动去重
-            }
+    // if (process.env.config && config.specialScanFiles) {
+    //     const envConfig = JSON.parse(process.env.config) as ENVConfig;
+    //     for (const key in config.specialScanFiles) {
+    //         if (envConfig.product === key || (envConfig.module && envConfig.module.endsWith(`@${key}`))) {
+    //             const files = config.specialScanFiles[key];
+    //             Logger.info(`specialScanFiles: key ${key} files ${JSON.stringify(files)}`);
+    //             files.forEach(item => specialScanFiles.add(item)); // 自动去重
+    //         }
+    //     }
+    // }
+
+    if (targetName) {
+        // 如果是主目标，则只扫描主目标的文件
+        const targetFiles = config.specialScanFiles?.[targetName];
+        if (targetFiles) {
+            Logger.info(`specialScanFiles: key ${targetName} files ${JSON.stringify(targetFiles)}`);
+            targetFiles.forEach(item => specialScanFiles.add(item)); // 自动去重
         }
     }
 
